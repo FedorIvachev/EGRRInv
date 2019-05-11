@@ -7,6 +7,9 @@ EGRR := module ()
         EG,
         RR,
         InvRR,
+        InvR,
+        InvRRmodOld,
+        InvRRmod,
         TriangleEG,
         TriangleRR;
     local
@@ -228,8 +231,9 @@ EGRR := module ()
 
     RR := proc(EM1::Matrix, m, x, remember::boolean:=false, noLA::boolean:=false)
         local
-            rd, cd, n, RM, ns, p, dummy, i, j, alphai, alphas, d, EM;
-
+            rd, cd, n, RM, ns, p, dummy, i, j, alphai, alphas, d, EM, time_start, time_finish, steps;
+        time_start := time();
+        steps := 0;
         forget(diff_row);
         DiffCount := 0;
         AlgCount := 0;
@@ -268,14 +272,18 @@ EGRR := module ()
             EM[i] := dummy;
             alphai := alpha(dummy, n, cd);
             alphas[i] := alphai;
+            steps := steps + 1;
         end do;
-        eval(EM), evalb(alphai>0);
+        time_finish := time();
+
+        eval(EM), evalb(alphai>0), eval(time_finish - time_start), steps;
     end proc;
 
     InvRR := proc(EM1::Matrix, m, x, remember::boolean:=false, noLA::boolean:=false)
         local
-            rd, cd, n, RM, ns, p, dummy, i, j, alphai, alphas, d, EM, W, dummy2, k, Linv;
+            rd, cd, n, RM, ns, p, dummy, i, j, alphai, alphas, d, EM, W, dummy2, k, Linv, time_start, time_finish;
 
+        time_start := time();
         forget(diff_row);
         DiffCount := 0;
         AlgCount := 0;
@@ -283,6 +291,7 @@ EGRR := module ()
         rd := LinearAlgebra:-RowDimension(EM);
         cd := LinearAlgebra:-ColumnDimension(EM);
         n := cd/m;
+        #print('alphas\n');
         alphas := [seq(alpha(EM[i], n, cd), i = 1..rd)];
         alphai := min(op(alphas));
         W := Matrix(rd, cd);
@@ -291,7 +300,7 @@ EGRR := module ()
         end do;
         while alphai>0 do
             RM := Matrix([seq([EM[i,cd-alphas[i]*n+1..cd-alphas[i]*n+n]], i = 1 .. rd)]);
-            #print("RM: ", RM);
+            #print('RM ', RM);
             if noLA then
                 p := dep(RM);
                 if p=false then
@@ -312,6 +321,7 @@ EGRR := module ()
                 end if
             end do;
             p := map(z->z/p[i],p);
+            #print('p ', p);
             AlgCount := AlgCount + rd;
             dummy := LinearAlgebra:-Map(dualnormal, LinearAlgebra:-VectorMatrixMultiply(p,
                                     Matrix([seq([`if`(p[j] = 0, EM[j], DiffRow(eval(EM[j]), alphai-alphas[j], x, n, cd, remember))], j = 1 .. rd)])));
@@ -322,7 +332,8 @@ EGRR := module ()
             EM[i] := dummy;
             alphai := alpha(dummy, n, cd);
             alphas[i] := alphai;
-            print(W);
+            #print('W ', W);
+            #print('Em', EM);
         end do;
         Linv := Matrix(rd, rd);
         for j to rd do
@@ -331,8 +342,328 @@ EGRR := module ()
             end do;
         end do;
         Linv := LinearAlgebra:-Multiply(LinearAlgebra:-MatrixInverse(Linv), W);
-        eval(Linv), eval(EM), evalb(alphai>0);
+
+        time_finish := time();
+        eval(Linv), eval(EM), evalb(alphai>0), eval(time_finish - time_start);
     end proc;
+
+    InvR := proc(L0::Matrix, m, x, 
+        remember::boolean:=false)
+        local
+            rd, cd, n, L1, alphas, alphai, W, Lf, i, j, ns, p, num, dummy, dummy2, t1, t2, L;
+        L := Matrix(2, 4);
+        for i to 2 do
+            for j to 4 do
+                L[i,j] := randpoly(x, coeffs = rand(-1..1), expons = rand(0..1));
+            end do;
+        end do;
+        print('L ', L);
+        t1 := time();
+        forget(diff_row);
+        DiffCount := 0;
+        AlgCount := 0;
+        #print('invR\n');
+        L1 := copy(L);
+        rd := LinearAlgebra:-RowDimension(L1);
+        cd := LinearAlgebra:-ColumnDimension(L1);
+        n := cd/m;
+        alphas := [seq(alpha(L1[i], n, cd), i = 1..rd)];
+        #print('alphas ', alphas);
+        alphai := min(op(alphas));
+        W := Matrix([seq([seq(eval(verify(i + cd - rd, j), [true=1,false=0]), j = 1..cd)], i = 1..rd)]);
+
+        while alphai>0 do
+            Lf := Matrix([seq([L1[i,cd-alphas[i]*n+1..cd-alphas[i]*n+n]], i = 1 .. rd)]);
+            #print('Lf ', Lf);
+            ns := LinearAlgebra:-NullSpace(LinearAlgebra:-Transpose(Lf));
+            if nops(ns)=0 then
+                break;
+            end if;
+            p := LinearAlgebra:-Transpose(ns[1]);
+            alphai :=0;
+            for i to rd do
+                if (p[i] <> 0) and (alphas[i]>alphai) then
+                    alphai := alphas[i];
+                    num := i;
+                end if
+            end do;
+            p := map(z->z/p[num],p);
+            AlgCount := AlgCount + rd;
+            dummy := LinearAlgebra:-Map(dualnormal, LinearAlgebra:-VectorMatrixMultiply(p,
+                                    Matrix([seq([`if`(p[j] = 0, L1[j], DiffRow(eval(L1[j]), alphai-alphas[j], x, n, cd, remember))], j = 1 .. rd)])));
+            dummy2 := LinearAlgebra:-Map(dualnormal, LinearAlgebra:-VectorMatrixMultiply(p,
+                                    Matrix([seq([`if`(p[j] = 0, W[j], DiffRow(eval(W[j]), alphai-alphas[j], x, n, cd, remember))], j = 1 .. rd)])));
+            W[num] := dummy2;
+            AlgCount := AlgCount + cd*(2*rd-1);
+            L1[num] := dummy;
+            alphai := alpha(dummy, n, cd);
+            alphas[num] := alphai;
+            print('W ', W);
+
+        end do;
+        
+        t2 := time();
+
+
+        eval(t2-t1), eval(L1), eval(W);
+    end proc;
+
+
+    InvRRmodOld := proc(EM1::Matrix, m, x, remember::boolean:=false)
+        local
+            rd, cd, n, RM, ns, p, dummy, i, j, alphai, alphas, d, EM, W, dummy2, k, Linv, time_start, time_finish, st, p_prev, alphas_prev, i_prev, alphai_prev, diff_row, diff_help, steps;
+        time_start := time();
+        forget(diff_row);
+        DiffCount := 0;
+        AlgCount := 0;
+        st := 1;
+        EM := copy(EM1);
+        rd := LinearAlgebra:-RowDimension(EM);
+        cd := LinearAlgebra:-ColumnDimension(EM);
+        n := cd/m;
+        alphas := [seq(alpha(EM[i], n, cd), i = 1..rd)];
+        alphai := min(op(alphas));
+        W := Matrix([seq([seq(eval(verify(i + cd - rd, j), [true=1,false=0]), j = 1..cd)], i = 1..rd)]);
+        steps := 0;
+        while alphai>0 do
+            if (st <> 0) then 
+                st := 0;
+            else 
+                st := 1;
+            end if;
+            #print('st ', st);
+            RM := Matrix([seq([EM[i,cd-alphas[i]*n+1..cd-alphas[i]*n+n]], i = 1 .. rd)]);
+            #print('RM ', RM);
+            ns := LinearAlgebra:-NullSpace(LinearAlgebra:-Transpose(RM));
+            if nops(ns)=0 then
+                break;
+            end if;
+            p := LinearAlgebra:-Transpose(ns[1]);
+            alphai :=0;
+            for j to rd do
+                if (p[j] <> 0) and (alphas[j]>alphai) then
+                    alphai := alphas[j];
+                    i := j;
+                end if
+            end do;
+            p := map(z->z/p[i],p);
+            #print('p ', p);
+            #print('al ', alphas);
+            AlgCount := AlgCount + rd;
+            dummy := LinearAlgebra:-Map(dualnormal, LinearAlgebra:-VectorMatrixMultiply(p,
+                                    Matrix([seq([`if`(p[j] = 0, EM[j], DiffRow(eval(EM[j]), alphai-alphas[j], x, n, cd, remember))], j = 1 .. rd)])));
+            dummy2 := Vector[row](cd);
+            if (st <> 0) then
+                if (i_prev <> i) then
+                    #print('here1');
+                    dummy2 := LinearAlgebra:-Map(dualnormal, LinearAlgebra:-VectorMatrixMultiply(p_prev,
+                                Matrix([seq([`if`(p_prev[j] = 0, W[j], DiffRow(eval(W[j]), alphai_prev-alphas_prev[j], x, n, cd, remember))], j = 1 .. rd)])));
+                    W[i_prev] := dummy2;
+                    dummy2 := LinearAlgebra:-Map(dualnormal, LinearAlgebra:-VectorMatrixMultiply(p,
+                                   Matrix([seq([`if`(p[j] = 0, W[j], DiffRow(eval(W[j]), alphai-alphas[j], x, n, cd, remember))], j = 1 .. rd)])));
+                else
+                    for j to rd do
+                        if (i = j) then
+                            diff_row := p[i] * p_prev[i] * W[i];
+                            dummy2 = dummy2 + diff_row;
+                        else
+                            if (alphas[i] - alphas[j] < alphas_prev[i] - alphas_prev[j]) then
+                                if (p[j] <> 0) then
+                                    diff_row := (DiffRow(eval(W[j]), alphai-alphas[j], x, n, cd, remember));
+                                    diff_help := p[i] * p_prev[j] * (DiffRow(eval(diff_row), alphas_prev[i] - alphas_prev[j] - alphai + alphas[j], x, n, cd, remember));
+                                    dummy2 := dummy2 + p[j] * diff_row + diff_help;
+                                    #print('1 ', dummy2);
+                                else
+                                    diff_help := p[i] * p_prev[j] * (DiffRow(eval(W[j]), alphas_prev[i] - alphas_prev[j] - alphai + alphas[j], x, n, cd, remember));
+                                    dummy2 := dummy2 + diff_help;
+                                    #print('2 ', diff_row);
+                                end if;
+                                #print(dummy2);
+                            else
+                                if (p_prev[j] <> 0) then
+                                    diff_row := (DiffRow(eval(W[j]), alphas_prev[i] - alphas_prev[j], x, n, cd, remember));
+                                    diff_help := p[j] * (DiffRow(eval(diff_row), alphai - alphas[j] - alphas_prev[i] + alphas_prev[j], x, n, cd, remember));
+                                    dummy2 := dummy2 + p_prev[j] * p[i] * diff_row + diff_help;
+                                    #print('3 ');
+                                else
+                                    diff_help := p[j] * (DiffRow(eval(diff_row), alphai - alphas[j] - alphas_prev[i] + alphas_prev[j], x, n, cd, remember));
+                                    dummy2 := dummy2 + diff_help;
+                                    #print('4 ', diff_row);
+                                end if;
+                                #print(dummy2);
+                            end if;
+                        end if;
+                    end do;
+                end if;
+                W[i] := dummy2;
+            else
+                #print('here2 ');
+                p_prev := p;
+                alphas_prev := alphas;
+                i_prev := i;
+                alphai_prev := alphai;
+            end if;
+            #dummy2 := LinearAlgebra:-Map(dualnormal, LinearAlgebra:-VectorMatrixMultiply(p,
+            #                        Matrix([seq([`if`(p[j] = 0, W[j], DiffRow(eval(W[j]), alphai-alphas[j], x, n, cd, remember))], j = 1 .. rd)])));
+            #print(dummy2);
+            #print('W ', W);
+            AlgCount := AlgCount + cd*(2*rd-1);
+            EM[i] := dummy;
+            alphai := alpha(dummy, n, cd);
+            alphas[i] := alphai;
+            #print('Em', EM);
+            steps := steps + 1;
+        end do;
+        alphas := [seq(alpha(EM[i], n, cd), i = 1..rd)];
+        alphai := min(op(alphas));
+        if (alphai = 1) then
+            if (st <> 0) then
+                #print(p_prev, alphas_prev, alphai_prev, i_prev);
+                dummy2 := LinearAlgebra:-Map(dualnormal, LinearAlgebra:-VectorMatrixMultiply(p_prev,
+                                   Matrix([seq([`if`(p_prev[j] = 0, W[j], DiffRow(eval(W[j]), alphai_prev-alphas_prev[j], x, n, cd, remember))], j = 1 .. rd)])));
+                W[i_prev] := dummy2;
+                #print(W[i_prev]);
+            end if;
+            Linv := Matrix(rd, rd);
+            for j to rd do
+                for k to rd do
+                    Linv[j, k] := EM[j, cd - rd + k];
+                end do;
+            end do;
+            Linv := LinearAlgebra:-Multiply(LinearAlgebra:-MatrixInverse(Linv), W);
+        else 
+            Linv := Matrix(1,1);
+        end if;
+        time_finish := time();
+        eval(Linv), eval(EM), eval(W), evalb(alphai>0), eval(time_finish - time_start), eval(steps);
+    end proc;
+
+
+    InvRRmod := proc(EM1::Matrix, m, x, remember::boolean:=false)
+        local
+            rd, cd, n, RM, ns, p, dummy, i, j, alphai, alphas, d, EM, W, dummy2, k, Linv, time_start, time_finish, st, p_prev, alphas_prev, i_prev, alphai_prev, diff_row, diff_help;
+        time_start := time();
+        forget(diff_row);
+        DiffCount := 0;
+        AlgCount := 0;
+        st := 1;
+        EM := copy(EM1);
+        rd := LinearAlgebra:-RowDimension(EM);
+        cd := LinearAlgebra:-ColumnDimension(EM);
+        n := cd/m;
+        alphas := [seq(alpha(EM[i], n, cd), i = 1..rd)];
+        alphai := min(op(alphas));
+        W := Matrix([seq([seq(eval(verify(i + cd - rd, j), [true=1,false=0]), j = 1..cd)], i = 1..rd)]);
+
+        while alphai>0 do
+            if (st <> 0) then 
+                st := 0;
+            else 
+                st := 1;
+            end if;
+            #print('st ', st);
+            RM := Matrix([seq([EM[i,cd-alphas[i]*n+1..cd-alphas[i]*n+n]], i = 1 .. rd)]);
+            #print('RM ', RM);
+            ns := LinearAlgebra:-NullSpace(LinearAlgebra:-Transpose(RM));
+            if nops(ns)=0 then
+                break;
+            end if;
+            p := LinearAlgebra:-Transpose(ns[1]);
+            alphai :=0;
+            for j to rd do
+                if (p[j] <> 0) and (alphas[j]>alphai) then
+                    alphai := alphas[j];
+                    i := j;
+                end if
+            end do;
+            p := map(z->z/p[i],p);
+            #print('p ', p);
+            #print('al ', alphas);
+            AlgCount := AlgCount + rd;
+            dummy := LinearAlgebra:-Map(dualnormal, LinearAlgebra:-VectorMatrixMultiply(p,
+                                    Matrix([seq([`if`(p[j] = 0, EM[j], DiffRow(eval(EM[j]), alphai-alphas[j], x, n, cd, remember))], j = 1 .. rd)])));
+            dummy2 := Vector[row](cd);
+            if (st <> 0) then
+                for j to rd do
+                    if (j = i_prev) then
+                        diff_row := p[i_prev] * (DiffRow(eval(p_prev[i_prev] * W[i_prev]), alphai-alphas[i_prev], x, n, cd, remember));
+                        dummy2 = dummy2 + diff_row;
+                    else
+                        if (alphas[i] - alphas[j] < alphas_prev[i_prev] - alphas_prev[j]) then
+                            if (p[j] <> 0) then
+                                diff_row := (DiffRow(eval(W[j]), alphai-alphas[j], x, n, cd, remember));
+                                diff_help := p_prev[j] * (DiffRow(eval(diff_row), alphas_prev[i_prev] - alphas_prev[j] - alphai + alphas[j], x, n, cd, remember));
+                                diff_help := p[i_prev] * (DiffRow(eval(diff_help), alphai - alphas[i_prev], x, n, cd, remember));
+                                dummy2 := dummy2 + p[j] * diff_row + diff_help;
+                                #print('1 ', dummy2);
+                            else
+                                diff_help := p_prev[j] * (DiffRow(eval(W[j]), alphas_prev[i_prev] - alphas_prev[j], x, n, cd, remember));
+                                diff_help := p[i_prev] * (DiffRow(eval(diff_help), alphai - alphas[i_prev], x, n, cd, remember));
+                                dummy2 := dummy2 + diff_help;
+                                #print('2 ', diff_row);
+                            end if;
+                            #print(dummy2);
+                        else
+                            if (p_prev[j] <> 0) then
+                                diff_row := (DiffRow(eval(W[j]), alphas_prev[i_prev]-alphas_prev[j], x, n, cd, remember));
+                                diff_help := p[j] * (DiffRow(eval(diff_row), alphai - alphas[j] - alphas_prev[i_prev] + alphas_prev[j], x, n, cd, remember));
+                                diff_row := p[i_prev] * (DiffRow(eval(p_prev[j] * diff_row), alphai - alphas[i_prev], x, n, cd, remember));
+                                dummy2 := dummy2 + diff_row + diff_help;
+
+                                #print('3 ');
+                            else
+                                diff_help := p[j] * (DiffRow(eval(W[j]), alphai - alphas[j], x, n, cd, remember));
+                                dummy2 := dummy2 + diff_help;
+                                #print('4 ');
+                            end if;
+                            #print(dummy2);
+                        end if;
+                    end if;
+                end do;
+                W[i] := dummy2;
+            else
+                #print('here2 ');
+                p_prev := p;
+                alphas_prev := alphas;
+                i_prev := i;
+                alphai_prev := alphai;
+            end if;
+            #dummy2 := LinearAlgebra:-Map(dualnormal, LinearAlgebra:-VectorMatrixMultiply(p,
+            #                        Matrix([seq([`if`(p[j] = 0, W[j], DiffRow(eval(W[j]), alphai-alphas[j], x, n, cd, remember))], j = 1 .. rd)])));
+            #W[i] := dummy2;
+            AlgCount := AlgCount + cd*(2*rd-1);
+            EM[i] := dummy;
+            alphai := alpha(dummy, n, cd);
+            alphas[i] := alphai;
+            #print('Em', EM);
+            #print('W ', W);
+        end do;
+        alphas := [seq(alpha(EM[i], n, cd), i = 1..rd)];
+        alphai := min(op(alphas));
+        if (alphai = 1) then
+            if (st <> 0) then
+                #print(p_prev, alphas_prev, alphai_prev, i_prev);
+                dummy2 := LinearAlgebra:-Map(dualnormal, LinearAlgebra:-VectorMatrixMultiply(p_prev,
+                                   Matrix([seq([`if`(p_prev[j] = 0, W[j], DiffRow(eval(W[j]), alphai_prev-alphas_prev[j], x, n, cd, remember))], j = 1 .. rd)])));
+                W[i_prev] := dummy2;
+                #print(W[i_prev]);
+            end if;
+            Linv := Matrix(rd, rd);
+            for j to rd do
+                for k to rd do
+                    Linv[j, k] := EM[j, cd - rd + k];
+                end do;
+            end do;
+            Linv := LinearAlgebra:-Multiply(LinearAlgebra:-MatrixInverse(Linv), W);
+        else 
+            Linv := Matrix(1,1);
+        end if;
+        time_finish := time();
+        eval(Linv), eval(EM), eval(W), evalb(alphai>0), eval(time_finish - time_start);
+    end proc;
+
+
+
 
     TriangleRR := proc(EM1::Matrix, m, x, remember::boolean:=false)
         local
@@ -384,7 +715,7 @@ EGRR := module ()
                 end if;
             end if;
         end do;
-        eval(EM), evalb(alTTTphai>0);
+        eval(EM), evalb(alphai>0);
     end proc;
 
 
